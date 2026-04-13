@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"context"
@@ -170,6 +170,11 @@ func newApp(opts options) *app {
 // NewHandler 返回共享的 HTTP 入口，供 EdgeOne Pages 与 Vercel 复用。
 func NewHandler() http.Handler {
 	return newApp(defaultOptions())
+}
+
+// Handler is the EdgeOne Pages entrypoint for this route.
+func Handler(w http.ResponseWriter, r *http.Request) {
+	NewHandler().ServeHTTP(w, r)
 }
 
 func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
