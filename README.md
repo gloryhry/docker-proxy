@@ -24,11 +24,9 @@
 
 ```text
 .
+├── index.go                 # EdgeOne Pages 根入口（Framework Mode）
 ├── pkg/proxy/handler.go     # 共享核心：统一 http.Handler
 ├── api/index.go             # Vercel 入口
-├── cloud-functions/         # EdgeOne Pages Go Runtime 单入口
-│   ├── go.mod
-│   └── index.go
 ├── vercel.json              # Vercel rewrite 配置
 └── pkg/proxy/handler_test.go # 共享核心测试
 ```
@@ -41,12 +39,10 @@
 go test ./...
 ```
 
-### EdgeOne Functions 模块测试/编译
+### EdgeOne 入口编译
 
 ```bash
-cd "cloud-functions"
-go test ./...
-go build ./...
+go build "./index.go"
 ```
 
 ## Docker 客户端使用方式
@@ -89,21 +85,21 @@ docker pull 你的域名/bitnami/redis:latest
 
 根据 EdgeOne 官方 Go Runtime 文档，当前项目使用 **Framework 模式 + 标准库 `net/http` 服务**：
 
-- 入口文件为 `cloud-functions/index.go`
+- 入口文件为仓库根目录 `index.go`
 - 入口文件名为 `index.go`，因此外部访问**无额外路径前缀**
-- 为兼容 EdgeOne Builder 当前的编译限制，采用**单入口自包含实现**，所有路由由同一个 Go HTTP 服务内部处理
+- 为绕过 EdgeOne 对 `cloud-functions` 的 Handler Mode 强制识别限制，采用**根目录单入口服务**
 
 ### 步骤
 
 1. 将仓库推送到 Git 平台
 2. 在 EdgeOne Pages 中导入该仓库
 3. 保持 Pages 根目录为仓库根目录
-4. 平台会自动识别 `cloud-functions/index.go` 并构建 Go 运行时服务
+4. 平台会自动识别仓库根目录 `index.go` 并构建 Go 运行时服务
 5. 部署完成后，直接使用 Pages 分配域名访问
 
 ### 路由说明
 
-- 所有外部路径都会进入 `cloud-functions/index.go` 中启动的 Go HTTP 服务
+- 所有外部路径都会进入根目录 `index.go` 中启动的 Go HTTP 服务
 - 服务内部继续由共享核心路由处理：
   - `/`
   - `/search`

@@ -9,11 +9,10 @@
 
 - 根目录存在 `go.mod`
 - Vercel 共享核心位于 `pkg/proxy/handler.go`
-- EdgeOne 运行时代码位于 `cloud-functions/index.go`
+- EdgeOne 运行时代码位于仓库根目录 `index.go`
 - Vercel 入口为 `api/index.go`
 - Vercel 路由配置为 `vercel.json`
-- EdgeOne 入口为 `cloud-functions/index.go`
-- EdgeOne 子模块为 `cloud-functions/go.mod`
+- EdgeOne 入口为仓库根目录 `index.go`
 
 ---
 
@@ -22,16 +21,15 @@
 ### 代码侧检查
 
 - [ ] 根目录存在 `go.mod`
+- [ ] EdgeOne 入口存在：仓库根目录 `index.go`
 - [ ] Vercel 入口存在：`api/index.go`
 - [ ] Vercel 路由配置存在：`vercel.json`
-- [ ] EdgeOne 入口存在：`cloud-functions/index.go`
-- [ ] EdgeOne 子模块存在：`cloud-functions/go.mod`
 - [ ] 本地验证通过：
 
 ```bash
 go test ./...
 go build ./...
-cd "cloud-functions" && go test ./... && go build ./...
+go build "./index.go"
 ```
 
 ### Git 准备
@@ -102,7 +100,7 @@ docker pull 你的自定义域名/library/nginx:latest
 
 ## 三、EdgeOne Pages 部署清单
 
-> 当前实现采用 **Go Runtime + `cloud-functions/index.go` 单入口**。  
+> 当前实现采用 **Go Runtime + 仓库根目录 `index.go` 单入口**。  
 > 这是基于 EdgeOne 官方 Go 文档中支持标准库 `net/http` 的模式整理出的落地方案。
 
 ### A. 控制台部署
@@ -112,8 +110,7 @@ docker pull 你的自定义域名/library/nginx:latest
 3. [ ] 选择当前仓库
 4. [ ] 在构建配置页检查：
    - [ ] **Root Directory**：仓库根目录
-   - [ ] 平台能识别 `cloud-functions/index.go`
-   - [ ] `cloud-functions/go.mod` 已在仓库中
+   - [ ] 平台能识别仓库根目录 `index.go`
    - [ ] 若平台提示框架/构建设置，优先使用自动识别
 5. [ ] 选择 **加速区域**
    - [ ] 若只面向海外/免备案，优先选非中国大陆区域
