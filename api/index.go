@@ -1,11 +1,11 @@
 package handler
 
 import (
-	dockerproxy "docker-proxy"
+	"docker-proxy/pkg/proxy"
 	"net/http"
 )
 
-var sharedHandler = dockerproxy.NewHandler()
+var sharedHandler = proxy.NewHandler()
 
 // Handler 作为 Vercel 的单函数入口，通过 rewrite 后恢复原始路径。
 func Handler(w http.ResponseWriter, r *http.Request) {

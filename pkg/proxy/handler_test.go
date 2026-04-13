@@ -1,4 +1,4 @@
-package dockerproxy
+package proxy
 
 import (
 	"encoding/json"

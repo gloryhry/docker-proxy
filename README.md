@@ -2,7 +2,7 @@
 
 自建 Docker Registry 代理服务，现已重构为 **Go 标准库共享核心 + 平台适配层**，可直接部署到：
 
-- **腾讯 EdgeOne Pages（Go Handler 模式）**
+- **腾讯 EdgeOne Pages（Go Runtime）**
 - **Vercel（Go Serverless Function + Rewrite）**
 
 项目完整保留原有能力：
@@ -24,13 +24,13 @@
 
 ```text
 .
-├── main.go                  # 共享核心：统一 http.Handler
+├── pkg/proxy/handler.go     # 共享核心：统一 http.Handler
 ├── api/index.go             # Vercel 入口
 ├── cloud-functions/         # EdgeOne Pages Go Handler 入口
 │   ├── go.mod
 │   └── index.go
 ├── vercel.json              # Vercel rewrite 配置
-└── handler_test.go          # 共享核心测试
+└── pkg/proxy/handler_test.go # 共享核心测试
 ```
 
 ## 本地验证

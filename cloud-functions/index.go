@@ -1,7 +1,7 @@
 package main
 
 import (
-	dockerproxy "docker-proxy"
+	"docker-proxy/pkg/proxy"
 	"log"
 	"net/http"
 	"os"
@@ -13,5 +13,5 @@ func main() {
 		port = "9000"
 	}
 
-	log.Fatal(http.ListenAndServe(":"+port, dockerproxy.NewHandler()))
+	log.Fatal(http.ListenAndServe(":"+port, proxy.NewHandler()))
 }
