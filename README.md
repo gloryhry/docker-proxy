@@ -1,95 +1,66 @@
 # Docker Registry Proxy
 
-自建 Docker Hub 镜像代理服务，部署在可访问 Docker Hub 的海外服务器上，解决国内无法直接拉取 Docker 镜像的问题。
+自建 Docker Registry 代理服务，现已重构为 **Go 标准库共享核心 + 平台适配层**，可直接部署到：
 
-## 功能
+- **腾讯 EdgeOne Pages（Go Handler 模式）**
+- **Vercel（Go Serverless Function + Rewrite）**
 
-- 透明代理 Docker Hub（registry-1.docker.io）的所有 Registry V2 API 请求
-- 内部自动处理 auth.docker.io 鉴权，Docker 客户端无需配置认证
-- Token 缓存，避免重复请求 auth.docker.io
-- 官方镜像自动补全 `library/` 前缀
-- Blob 下载 CDN 重定向自动跟随（支持多跳）
-- 支持多上游仓库路由（quay.io、gcr.io、ghcr.io、registry.k8s.io 等）
-- 浏览器访问时展示 Docker Hub 镜像搜索页面
+项目完整保留原有能力：
+
+- 透明代理 Docker Hub（`registry-1.docker.io`）Registry V2 API
+- 自动代理 `auth.docker.io` 鉴权，Docker 客户端无需单独登录
+- Token 内存缓存，减少重复鉴权
+- Docker Hub 官方镜像自动补全 `library/` 前缀
+- Blob 下载 CDN 重定向自动跟随
+- 多上游仓库路由（`quay.io`、`gcr.io`、`ghcr.io`、`registry.k8s.io` 等）
+- 浏览器访问时展示 Docker Hub 镜像搜索页
 - 爬虫 UA 屏蔽 + nginx 伪装页
-- `/health` 健康检查端点，诊断到上游的连通性
-- 支持 TLS（HTTPS）
-- 支持后台守护进程模式运行
-- 单文件编译，无外部依赖，静态链接
+- `/health` 健康检查
+- 全部公开路径保持不变：`/`、`/search`、`/v1/*`、`/token`、`/v2/*`、`/health`
 
-## 编译
+> 当前版本**不再提供 VPS 二进制常驻进程 / TLS / 守护进程模式**。
 
-需要 Go 1.21+。
+## 项目结构
+
+```text
+.
+├── main.go                  # 共享核心：统一 http.Handler
+├── api/index.go             # Vercel 入口
+├── cloud-functions/         # EdgeOne Pages Go Handler 入口
+│   ├── go.mod
+│   └── index.go
+├── vercel.json              # Vercel rewrite 配置
+└── handler_test.go          # 共享核心测试
+```
+
+## 本地验证
+
+### 根模块测试
 
 ```bash
-# 本机编译
-go build -o docker-proxy .
-
-# 交叉编译 Linux x86-64（用于部署到服务器）
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o docker-proxy-linux-amd64 .
+go test ./...
 ```
 
-## 部署
-
-将编译好的二进制上传到海外服务器：
+### EdgeOne Functions 模块测试/编译
 
 ```bash
-chmod +x docker-proxy-linux-amd64
-
-# 前台运行（调试用）
-./docker-proxy-linux-amd64 -addr :5000
-
-# 后台运行
-./docker-proxy-linux-amd64 -d -addr :5000
-
-# 停止
-kill $(cat docker-proxy.pid)
+cd "cloud-functions"
+go test ./...
+go build ./...
 ```
 
-### 命令行参数
+## Docker 客户端使用方式
 
-| 参数 | 默认值 | 说明 |
-|---|---|---|
-| `-addr` | `:5000` | 监听地址 |
-| `-tls-cert` | 空 | TLS 证书文件路径（留空则使用 HTTP） |
-| `-tls-key` | 空 | TLS 私钥文件路径 |
-| `-d` | `false` | 后台守护进程模式 |
-| `-log` | `docker-proxy.log` | 日志文件路径（守护进程模式下生效） |
+部署成功后，直接把你的 Pages/Vercel 域名配置为镜像代理地址即可。
 
-### 使用 systemd 管理（推荐）
+### 方式一：配置 `registry-mirrors`
 
-创建 `/etc/systemd/system/docker-proxy.service`：
-
-```ini
-[Unit]
-Description=Docker Registry Proxy
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/opt/docker-proxy/docker-proxy-linux-amd64 -addr :5000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now docker-proxy
-```
-
-## Docker 客户端配置
-
-### 方式一：配置 registry-mirrors（推荐）
-
-编辑 Docker daemon 配置文件 `/etc/docker/daemon.json`：
+编辑 `/etc/docker/daemon.json`：
 
 ```json
 {
-  "registry-mirrors": ["http://你的服务器IP:5000"],
-  "insecure-registries": ["你的服务器IP:5000"]
+  "registry-mirrors": ["https://你的域名"],
+  "insecure-registries": []
 }
 ```
 
@@ -100,44 +71,82 @@ sudo systemctl daemon-reload
 sudo systemctl restart docker
 ```
 
-验证配置生效：
-
-```bash
-docker info | grep -A 5 "Registry Mirrors"
-```
-
-之后正常使用 `docker pull` 即可自动走代理：
+之后即可直接：
 
 ```bash
 docker pull nginx
 docker pull ubuntu:22.04
 ```
 
-> 如果使用 HTTPS（配置了 TLS 证书），则不需要 `insecure-registries`。
-
 ### 方式二：直接指定代理地址拉取
 
-无需修改 daemon.json，直接通过代理地址拉取：
-
 ```bash
-docker pull 你的服务器IP:5000/library/nginx:latest
-docker pull 你的服务器IP:5000/bitnami/redis:latest
+docker pull 你的域名/library/nginx:latest
+docker pull 你的域名/bitnami/redis:latest
 ```
 
-拉取后可用 `docker tag` 重命名：
+## EdgeOne Pages 部署
 
-```bash
-docker tag 你的服务器IP:5000/library/nginx:latest nginx:latest
-```
+根据 EdgeOne 官方 Go Runtime 文档，当前项目使用 **Framework 模式 + 标准库 `net/http` 服务**：
+
+- 入口文件为 `cloud-functions/index.go`
+- 入口文件名为 `index.go`，因此外部访问**无额外路径前缀**
+- 共享核心直接作为标准 `http.Handler` 提供给 EdgeOne 运行时
+
+### 步骤
+
+1. 将仓库推送到 Git 平台
+2. 在 EdgeOne Pages 中导入该仓库
+3. 保持 Pages 根目录为仓库根目录
+4. 平台会自动识别 `cloud-functions/index.go` 并构建 Go 运行时服务
+5. 部署完成后，直接使用 Pages 分配域名访问
+
+### 路由说明
+
+- 所有外部路径都会进入 `cloud-functions/index.go` 中启动的 Go HTTP 服务
+- 服务内部继续由共享核心路由处理：
+  - `/`
+  - `/search`
+  - `/v1/*`
+  - `/token`
+  - `/v2/*`
+  - `/health`
+
+## Vercel 部署
+
+根据 Vercel 官方 Go Runtime 文档，当前项目使用：
+
+- 根目录 `go.mod`
+- `/api/index.go` 单函数入口
+- `vercel.json` rewrite，将全部公开路径转发到该函数
+
+### 步骤
+
+1. 将仓库导入 Vercel
+2. 不需要改代码入口
+3. 保持项目根目录为仓库根目录
+4. 平台会自动识别根目录 `go.mod` 与 `/api/index.go`
+5. 部署完成后，直接使用 Vercel 域名访问
+
+### 路由说明
+
+用户访问路径不会变，仍然是：
+
+- `/`
+- `/search`
+- `/v1/*`
+- `/token`
+- `/v2/*`
+- `/health`
+
+Vercel 通过 `vercel.json` 在内部将这些路径 rewrite 到 `/api/index.go`，然后再恢复原始路径交给共享核心处理。
 
 ## 诊断
 
 ### 健康检查
 
-访问 `/health` 端点检测代理到上游的连通性：
-
 ```bash
-curl http://你的服务器IP:5000/health
+curl "https://你的域名/health"
 ```
 
 返回示例：
@@ -145,68 +154,63 @@ curl http://你的服务器IP:5000/health
 ```json
 {
   "proxy": "running",
-  "listen": ":5000",
+  "time": "2026-04-13T15:00:00+08:00",
+  "listen": "serverless",
   "checks": [
-    {"name": "auth.docker.io", "status": "HTTP 200", "latency": "66ms", "detail": "OK"},
-    {"name": "registry-1.docker.io", "status": "HTTP 401", "latency": "13ms", "detail": "OK"},
-    {"name": "hub.docker.com", "status": "HTTP 200", "latency": "132ms", "detail": "OK"}
+    {
+      "name": "auth.docker.io",
+      "url": "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/alpine:pull",
+      "status": "HTTP 200",
+      "latency": "66ms",
+      "detail": "OK"
+    }
   ]
 }
 ```
 
-- `auth.docker.io` → HTTP 200 表示鉴权服务可达
-- `registry-1.docker.io` → HTTP 401 表示 Registry 可达（未认证返回 401 是正常的）
-- 任何一个显示 `FAIL` 说明服务器无法访问 Docker Hub
-
-### V2 端点测试
+### V2 探活
 
 ```bash
-curl http://你的服务器IP:5000/v2/
-# 期望: {} （HTTP 200，带 Docker-Distribution-Api-Version 头）
+curl "https://你的域名/v2/"
 ```
 
-### 手动测试镜像拉取
+期望：
+
+- HTTP 200
+- Header 含 `Docker-Distribution-Api-Version: registry/2.0`
+- Body 为 `{}`
+
+### 手动测试 Manifest 拉取
 
 ```bash
-curl -s http://你的服务器IP:5000/v2/library/alpine/manifests/latest \
+curl -s "https://你的域名/v2/library/alpine/manifests/latest" \
   -H "Accept: application/vnd.docker.distribution.manifest.v2+json" | head -20
 ```
 
 ## 支持的上游仓库
 
-默认代理 Docker Hub。通过 `ns` 查询参数或域名前缀路由支持其他仓库：
+默认代理 Docker Hub。也可通过 `ns` 查询参数或域名前缀路由其他仓库：
 
 | 前缀/参数 | 上游 |
 |---|---|
-| 默认 | registry-1.docker.io |
-| `quay` | quay.io |
-| `gcr` | gcr.io |
-| `k8s-gcr` | k8s.gcr.io |
-| `k8s` | registry.k8s.io |
-| `ghcr` | ghcr.io |
-| `cloudsmith` | docker.cloudsmith.io |
-| `nvcr` | nvcr.io |
+| 默认 | `registry-1.docker.io` |
+| `quay` | `quay.io` |
+| `gcr` | `gcr.io` |
+| `k8s-gcr` | `k8s.gcr.io` |
+| `k8s` | `registry.k8s.io` |
+| `ghcr` | `ghcr.io` |
+| `cloudsmith` | `docker.cloudsmith.io` |
+| `nvcr` | `nvcr.io` |
 
-## 架构
+## 注意事项
 
-```
-Docker Client (国内)
-    │
-    │  docker pull nginx
-    │
-    ▼
-Docker Proxy (海外 VPS :5000)
-    │
-    ├─→ auth.docker.io   (获取 token，带缓存)
-    │
-    ├─→ registry-1.docker.io  (拉取 manifest)
-    │
-    └─→ CDN / S3  (跟随重定向，下载 blob)
-    │
-    ▼
-Docker Client 收到镜像数据
-```
+- Token 缓存为**实例内内存缓存**，属于 best-effort；冷启动或实例切换时可能失效
+- Pages/Vercel 的网络出口、响应时长、文件大小限制以各平台实时规则为准
+- 浏览器页面代理、Registry API 代理、CDN 重定向跟随均已保留
 
-## License
+## 参考文档
 
-MIT
+- EdgeOne Pages Go Runtime：<https://pages.edgeone.ai/zh/document/go>
+- EdgeOne Pages Go Functions 公告：<https://pages.edgeone.ai/zh/resources/pages-functions-support-python-and-go>
+- Vercel Go Runtime：<https://vercel.com/docs/functions/runtimes/go>
+- Vercel Rewrites：<https://vercel.com/docs/rewrites>

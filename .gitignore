@@ -1,5 +1,29 @@
 .DS_Store
 .idea
 .vscode
-docker-proxy-linux-amd64
-docker-proxy-linux-arm64
+
+# Go / build artifacts
+bin/
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+cover.out
+
+# Project binaries
+docker-proxy
+docker-proxy-*
+
+# Runtime files
+*.log
+logs/
+*.pid
+
+# AI coding / local workflow metadata
+.serena/
+.spec-workflow/
