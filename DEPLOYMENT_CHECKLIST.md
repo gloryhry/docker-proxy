@@ -8,7 +8,8 @@
 当前仓库结构基于以下事实编写：
 
 - 根目录存在 `go.mod`
-- 共享核心位于 `pkg/proxy/handler.go`
+- Vercel 共享核心位于 `pkg/proxy/handler.go`
+- EdgeOne 自包含运行时代码位于 `cloud-functions/handler.go`
 - Vercel 入口为 `api/index.go`
 - Vercel 路由配置为 `vercel.json`
 - EdgeOne 入口为 `cloud-functions/index.go`

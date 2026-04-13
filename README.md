@@ -26,8 +26,9 @@
 .
 ├── pkg/proxy/handler.go     # 共享核心：统一 http.Handler
 ├── api/index.go             # Vercel 入口
-├── cloud-functions/         # EdgeOne Pages Go Handler 入口
+├── cloud-functions/         # EdgeOne Pages Go Runtime 入口（自包含）
 │   ├── go.mod
+│   ├── handler.go
 │   └── index.go
 ├── vercel.json              # Vercel rewrite 配置
 └── pkg/proxy/handler_test.go # 共享核心测试
@@ -91,7 +92,7 @@ docker pull 你的域名/bitnami/redis:latest
 
 - 入口文件为 `cloud-functions/index.go`
 - 入口文件名为 `index.go`，因此外部访问**无额外路径前缀**
-- 共享核心直接作为标准 `http.Handler` 提供给 EdgeOne 运行时
+- 为兼容 EdgeOne Builder 的编译限制，`cloud-functions/` 内保留了一份自包含的 Go 实现，不依赖父目录模块
 
 ### 步骤
 
