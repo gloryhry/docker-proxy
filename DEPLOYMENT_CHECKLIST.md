@@ -6,10 +6,8 @@
 
 - [ ] 代码已位于 `edgeone-pages` 分支或独立 EdgeOne 仓库
 - [ ] `cloud-functions/go.mod` 存在
-- [ ] `cloud-functions/index.go` 存在
 - [ ] `cloud-functions/[[path]].go` 存在
-- [ ] `cloud-functions/shared.go` 存在
-- [ ] `index.go` 与 `[[path]].go` 仅保留各自入口函数
+- [ ] `[[path]].go` 同时包含完整代理逻辑与唯一入口函数 `Handler`
 - [ ] 如本地安装了 EdgeOne CLI，可执行：
 
 ```bash
@@ -25,12 +23,6 @@ edgeone pages build
 - **Install Command**：留空
 - **Build Command**：留空
 - **Output Directory**：留空
-
-说明：
-
-- 当前仓库不是静态站点，无需输出目录
-- 当前仓库不是前端框架项目，无需构建命令
-- Go Handlers 会从 `cloud-functions/` 自动识别
 
 ## 三、部署步骤
 
@@ -66,25 +58,28 @@ docker pull 你的域名/library/nginx:latest
 
 ## 六、排障要点
 
-如果部署后仍返回 EdgeOne 默认 404，优先检查：
-
-- [ ] 仓库中是否仍混入其他平台入口
-- [ ] `cloud-functions/` 目录是否存在且在仓库根目录下
-- [ ] 是否误填了 Build Command / Output Directory
-- [ ] 是否实际部署的是正确分支
-- [ ] 自定义域名是否已正确绑定到当前项目
-
 如果构建日志再次出现：
 
 ```text
 package xxx is not in std
 ```
 
-通常说明：
+说明仍依赖了额外内部包。
 
-- [ ] `cloud-functions` 下的路由文件仍重复声明了共享常量/函数
-- [ ] `cloud-functions` 下的路由文件仍依赖了子目录自定义 Go 包
-- [ ] 正确结构应为：`shared.go` 共享逻辑 + `index.go` / `[[path]].go` 唯一路由入口
+如果构建日志再次出现：
+
+```text
+redeclared in this block
+```
+
+说明仍然有多个路由文件重复声明共享逻辑。
+
+当前推荐结构必须保持为：
+
+- `cloud-functions/go.mod`
+- `cloud-functions/[[path]].go`
+
+即：**单文件入口 + 单文件逻辑**。
 
 ## 七、官方文档
 

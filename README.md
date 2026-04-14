@@ -23,45 +23,48 @@
 .
 ├── cloud-functions/
 │   ├── go.mod
-│   ├── shared.go                   # 共享代理逻辑
-│   ├── index.go                    # 根路径入口
-│   └── [[path]].go                 # 其余路径入口
+│   └── [[path]].go                 # 单一可选 catch-all 路由入口
 ├── README.md
 └── DEPLOYMENT_CHECKLIST.md
 ```
 
 ## 设计说明
 
-基于 EdgeOne Pages 官方 Go 文档，当前仓库采用 **Handler Mode**：
+基于当前 EdgeOne Builder 的实际行为，最稳妥的做法是：
 
-- 运行时代码全部放在 `cloud-functions/`
-- `shared.go` 存放共享代理逻辑，且与路由文件同属 `package handler`
-- `index.go` 与 `[[path]].go` 只保留各自唯一的入口函数，避免重复声明
-- 不再依赖子目录自定义 Go 包，避免 EdgeOne 编译时报 `package ... is not in std`
-- `cloud-functions/go.mod` 单独存在，保持 Go Functions 目录独立
+- 只保留 **一个** 根级路由文件：`cloud-functions/[[path]].go`
+- 该文件内包含完整代理逻辑与唯一入口函数 `Handler`
+- 不再依赖其他共享 `.go` 文件
+- 不再依赖子目录自定义 Go 包
 
-这样做的目标是：
+这样可以同时规避两类构建失败：
 
-- **KISS**：严格贴合 EdgeOne 的 Handler 目录约定
-- **DRY**：虽然为适配平台保留了少量文件级重复，但避免了更复杂的构建注入逻辑
-- **YAGNI**：不再保留 Vercel / VPS / 多平台混合入口
-- **SOLID**：部署适配与业务目标分离，EdgeOne 分支只服务一个平台
+1. `package ... is not in std`
+2. `redeclared in this block`
+
+原因是 EdgeOne 在 `cloud-functions/` 下对 Go 路由文件的编译行为，与标准 Go 多文件包编译并不完全一致。
 
 ## 本地验证
 
 由于 `[[path]].go` 是 EdgeOne 的文件路由约定，标准 `go test ./...` / `go build ./...` 无法直接识别该文件名。
 
-建议使用：
+建议优先使用：
 
 ```bash
 edgeone pages build
 ```
 
-如果需要本地等效验证，可把以下文件临时复制为普通文件名后执行 Go 编译：
+如果需要本地做等效 Go 编译验证，可临时复制：
 
-- `shared.go`
-- `index.go`
-- `[[path]].go` → 例如改名为 `catchall.go`
+- `cloud-functions/go.mod`
+- `cloud-functions/[[path]].go` → 例如改名为 `main.go`
+
+然后再执行：
+
+```bash
+go test ./...
+go build ./...
+```
 
 ## EdgeOne Pages 部署
 
@@ -75,19 +78,13 @@ edgeone pages build
 - **Build Command**：留空
 - **Output Directory**：留空
 
-原因：
-
-- 这是 Go Functions 仓库，不是静态站点
-- `cloud-functions/` 会被 EdgeOne 识别为函数目录
-- 不需要额外的前端安装和构建过程
-
 ### 部署步骤
 
 1. 将 `edgeone-pages` 分支推送到 Git 平台
 2. 在 EdgeOne Pages 中导入该分支
 3. 保持项目根目录为仓库根目录
 4. 保持安装 / 构建 / 输出目录为空
-5. 等待 EdgeOne 自动识别 `cloud-functions/` 下的 Go Handlers
+5. 等待 EdgeOne 自动识别 `cloud-functions/[[path]].go`
 6. 部署完成后验证：
 
 ```bash
@@ -133,13 +130,6 @@ curl -i "https://你的域名/v2/"
 - HTTP 200
 - Header 含 `Docker-Distribution-Api-Version: registry/2.0`
 - Body 为 `{}`
-
-### Manifest 拉取验证
-
-```bash
-curl -s "https://你的域名/v2/library/alpine/manifests/latest" \
-  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" | head -20
-```
 
 ## 支持的上游仓库
 
