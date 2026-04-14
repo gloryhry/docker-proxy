@@ -23,8 +23,9 @@
 .
 ├── cloud-functions/
 │   ├── go.mod
-│   ├── index.go                    # 根路径 /
-│   └── [[path]].go                 # 其余路径 catch-all
+│   ├── shared.go                   # 共享代理逻辑
+│   ├── index.go                    # 根路径入口
+│   └── [[path]].go                 # 其余路径入口
 ├── README.md
 └── DEPLOYMENT_CHECKLIST.md
 ```
@@ -34,8 +35,9 @@
 基于 EdgeOne Pages 官方 Go 文档，当前仓库采用 **Handler Mode**：
 
 - 运行时代码全部放在 `cloud-functions/`
-- `index.go` 与 `[[path]].go` 都是 **自包含** 的 Handler 文件
-- 不再依赖 `cloud-functions` 内部的自定义 Go 包，避免 EdgeOne 单文件编译时报 `package ... is not in std`
+- `shared.go` 存放共享代理逻辑，且与路由文件同属 `package handler`
+- `index.go` 与 `[[path]].go` 只保留各自唯一的入口函数，避免重复声明
+- 不再依赖子目录自定义 Go 包，避免 EdgeOne 编译时报 `package ... is not in std`
 - `cloud-functions/go.mod` 单独存在，保持 Go Functions 目录独立
 
 这样做的目标是：
@@ -55,7 +57,11 @@
 edgeone pages build
 ```
 
-如果只验证核心代理逻辑，可将 `cloud-functions/index.go` 临时复制为普通文件名后再用标准 Go 工具检查。
+如果需要本地等效验证，可把以下文件临时复制为普通文件名后执行 Go 编译：
+
+- `shared.go`
+- `index.go`
+- `[[path]].go` → 例如改名为 `catchall.go`
 
 ## EdgeOne Pages 部署
 

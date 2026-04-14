@@ -8,7 +8,8 @@
 - [ ] `cloud-functions/go.mod` 存在
 - [ ] `cloud-functions/index.go` 存在
 - [ ] `cloud-functions/[[path]].go` 存在
-- [ ] `index.go` 与 `[[path]].go` 均为自包含 Handler 文件
+- [ ] `cloud-functions/shared.go` 存在
+- [ ] `index.go` 与 `[[path]].go` 仅保留各自入口函数
 - [ ] 如本地安装了 EdgeOne CLI，可执行：
 
 ```bash
@@ -81,8 +82,9 @@ package xxx is not in std
 
 通常说明：
 
-- [ ] `cloud-functions` 下的 Handler 文件仍依赖了自定义内部包
-- [ ] EdgeOne 正在按单文件 Handler 模式编译，需继续保持入口文件完全自包含
+- [ ] `cloud-functions` 下的路由文件仍重复声明了共享常量/函数
+- [ ] `cloud-functions` 下的路由文件仍依赖了子目录自定义 Go 包
+- [ ] 正确结构应为：`shared.go` 共享逻辑 + `index.go` / `[[path]].go` 唯一路由入口
 
 ## 七、官方文档
 
