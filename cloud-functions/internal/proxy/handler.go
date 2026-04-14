@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -168,18 +167,9 @@ func newApp(opts options) *app {
 	}
 }
 
-// NewHandler 返回共享的 HTTP 入口，供 EdgeOne Pages 与 Vercel 复用。
+// NewHandler 返回共享的 HTTP 入口，供 EdgeOne Pages 路由文件复用。
 func NewHandler() http.Handler {
 	return newApp(defaultOptions())
-}
-
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "3000"
-	}
-
-	log.Fatal(http.ListenAndServe(":"+port, NewHandler()))
 }
 
 func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {

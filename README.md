@@ -1,11 +1,10 @@
-# Docker Registry Proxy
+# Docker Registry Proxy for EdgeOne Pages
 
-自建 Docker Registry 代理服务，现已重构为 **Go 标准库共享核心 + 平台适配层**，可直接部署到：
+这是一个为 **腾讯 EdgeOne Pages** 单独整理的 Docker Registry 代理仓库。
 
-- **腾讯 EdgeOne Pages（Go Runtime）**
-- **Vercel（Go Serverless Function + Rewrite）**
+当前仓库只面向 **EdgeOne Go Runtime / Framework Mode**，不再混入 Vercel 结构，从而避免平台识别冲突。
 
-项目完整保留原有能力：
+## 保留能力
 
 - 透明代理 Docker Hub（`registry-1.docker.io`）Registry V2 API
 - 自动代理 `auth.docker.io` 鉴权，Docker 客户端无需单独登录
@@ -18,40 +17,82 @@
 - `/health` 健康检查
 - 全部公开路径保持不变：`/`、`/search`、`/v1/*`、`/token`、`/v2/*`、`/health`
 
-> 当前版本**不再提供 VPS 二进制常驻进程 / TLS / 守护进程模式**。
-
-## 项目结构
+## 仓库结构
 
 ```text
 .
-├── index.go                 # EdgeOne Pages 根入口（Framework Mode）
-├── pkg/proxy/handler.go     # 共享核心：统一 http.Handler
-├── api/index.go             # Vercel 入口
-├── vercel.json              # Vercel rewrite 配置
-└── pkg/proxy/handler_test.go # 共享核心测试
+├── cloud-functions/
+│   ├── go.mod
+│   ├── index.go                    # EdgeOne 单入口
+│   └── internal/proxy/
+│       ├── handler.go              # 核心代理逻辑
+│       └── handler_test.go         # 核心测试
+├── README.md
+└── DEPLOYMENT_CHECKLIST.md
 ```
+
+## 设计说明
+
+基于 EdgeOne Pages 官方 Go 文档，当前仓库采用 **Framework Mode**：
+
+- 运行时代码全部放在 `cloud-functions/`
+- `cloud-functions/index.go` 作为唯一 Go 入口
+- 所有 HTTP 路由统一交给 `internal/proxy` 中的共享 handler
+- `cloud-functions/go.mod` 独立存在，避免根目录混合其他平台配置
+
+这样做的目标是：
+
+- **KISS**：只保留 EdgeOne 需要的结构
+- **DRY**：所有 HTTP 逻辑仍集中在一套共享 handler 中
+- **YAGNI**：不再保留 Vercel / VPS / 多平台混合入口
+- **SOLID**：路由入口与代理核心分离，职责清晰
 
 ## 本地验证
 
-### 根模块测试
+在仓库根目录执行：
 
 ```bash
+cd "cloud-functions"
 go test ./...
+go build ./...
 ```
 
-### EdgeOne 入口编译
+## EdgeOne Pages 部署
+
+### 控制台配置
+
+导入仓库后，建议按以下方式填写：
+
+- **框架（Framework Preset）**：`Other`
+- **Root Directory**：仓库根目录
+- **Install Command**：留空
+- **Build Command**：留空
+- **Output Directory**：留空
+
+原因：
+
+- 这是 Go Functions 仓库，不是静态站点
+- 运行时代码已按 EdgeOne 约定放在 `cloud-functions/`
+- 不需要额外的前端构建步骤
+
+### 部署步骤
+
+1. 将当前分支代码推送到 Git 仓库
+2. 在 EdgeOne Pages 中导入该仓库
+3. 保持项目根目录为仓库根目录
+4. 保持安装/构建/输出目录为空
+5. 等待 EdgeOne 自动识别 `cloud-functions/` 下的 Go Functions
+6. 部署完成后验证：
 
 ```bash
-go build "./index.go"
+curl -i "https://你的域名/v2/"
+curl "https://你的域名/health"
+curl -I "https://你的域名/"
 ```
 
-## Docker 客户端使用方式
-
-部署成功后，直接把你的 Pages/Vercel 域名配置为镜像代理地址即可。
+## Docker 客户端使用
 
 ### 方式一：配置 `registry-mirrors`
-
-编辑 `/etc/docker/daemon.json`：
 
 ```json
 {
@@ -60,84 +101,14 @@ go build "./index.go"
 }
 ```
 
-重启 Docker：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart docker
-```
-
-之后即可直接：
-
-```bash
-docker pull nginx
-docker pull ubuntu:22.04
-```
-
 ### 方式二：直接指定代理地址拉取
 
 ```bash
 docker pull 你的域名/library/nginx:latest
-docker pull 你的域名/bitnami/redis:latest
+docker pull 你的域名/library/alpine:latest
 ```
 
-## EdgeOne Pages 部署
-
-根据 EdgeOne 官方 Go Runtime 文档，当前项目使用 **Framework 模式 + 标准库 `net/http` 服务**：
-
-- 入口文件为仓库根目录 `index.go`
-- 入口文件名为 `index.go`，因此外部访问**无额外路径前缀**
-- 为绕过 EdgeOne 对 `cloud-functions` 的 Handler Mode 强制识别限制，采用**根目录单入口服务**
-
-### 步骤
-
-1. 将仓库推送到 Git 平台
-2. 在 EdgeOne Pages 中导入该仓库
-3. 保持 Pages 根目录为仓库根目录
-4. 平台会自动识别仓库根目录 `index.go` 并构建 Go 运行时服务
-5. 部署完成后，直接使用 Pages 分配域名访问
-
-### 路由说明
-
-- 所有外部路径都会进入根目录 `index.go` 中启动的 Go HTTP 服务
-- 服务内部继续由共享核心路由处理：
-  - `/`
-  - `/search`
-  - `/v1/*`
-  - `/token`
-  - `/v2/*`
-  - `/health`
-
-## Vercel 部署
-
-根据 Vercel 官方 Go Runtime 文档，当前项目使用：
-
-- 根目录 `go.mod`
-- `/api/index.go` 单函数入口
-- `vercel.json` rewrite，将全部公开路径转发到该函数
-
-### 步骤
-
-1. 将仓库导入 Vercel
-2. 不需要改代码入口
-3. 保持项目根目录为仓库根目录
-4. 平台会自动识别根目录 `go.mod` 与 `/api/index.go`
-5. 部署完成后，直接使用 Vercel 域名访问
-
-### 路由说明
-
-用户访问路径不会变，仍然是：
-
-- `/`
-- `/search`
-- `/v1/*`
-- `/token`
-- `/v2/*`
-- `/health`
-
-Vercel 通过 `vercel.json` 在内部将这些路径 rewrite 到 `/api/index.go`，然后再恢复原始路径交给共享核心处理。
-
-## 诊断
+## 常用验证
 
 ### 健康检查
 
@@ -145,29 +116,10 @@ Vercel 通过 `vercel.json` 在内部将这些路径 rewrite 到 `/api/index.go`
 curl "https://你的域名/health"
 ```
 
-返回示例：
-
-```json
-{
-  "proxy": "running",
-  "time": "2026-04-13T15:00:00+08:00",
-  "listen": "serverless",
-  "checks": [
-    {
-      "name": "auth.docker.io",
-      "url": "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/alpine:pull",
-      "status": "HTTP 200",
-      "latency": "66ms",
-      "detail": "OK"
-    }
-  ]
-}
-```
-
-### V2 探活
+### Registry V2 探活
 
 ```bash
-curl "https://你的域名/v2/"
+curl -i "https://你的域名/v2/"
 ```
 
 期望：
@@ -176,7 +128,7 @@ curl "https://你的域名/v2/"
 - Header 含 `Docker-Distribution-Api-Version: registry/2.0`
 - Body 为 `{}`
 
-### 手动测试 Manifest 拉取
+### Manifest 拉取验证
 
 ```bash
 curl -s "https://你的域名/v2/library/alpine/manifests/latest" \
@@ -184,8 +136,6 @@ curl -s "https://你的域名/v2/library/alpine/manifests/latest" \
 ```
 
 ## 支持的上游仓库
-
-默认代理 Docker Hub。也可通过 `ns` 查询参数或域名前缀路由其他仓库：
 
 | 前缀/参数 | 上游 |
 |---|---|
@@ -198,15 +148,8 @@ curl -s "https://你的域名/v2/library/alpine/manifests/latest" \
 | `cloudsmith` | `docker.cloudsmith.io` |
 | `nvcr` | `nvcr.io` |
 
-## 注意事项
-
-- Token 缓存为**实例内内存缓存**，属于 best-effort；冷启动或实例切换时可能失效
-- Pages/Vercel 的网络出口、响应时长、文件大小限制以各平台实时规则为准
-- 浏览器页面代理、Registry API 代理、CDN 重定向跟随均已保留
-
 ## 参考文档
 
 - EdgeOne Pages Go Runtime：<https://pages.edgeone.ai/zh/document/go>
-- EdgeOne Pages Go Functions 公告：<https://pages.edgeone.ai/zh/resources/pages-functions-support-python-and-go>
-- Vercel Go Runtime：<https://vercel.com/docs/functions/runtimes/go>
-- Vercel Rewrites：<https://vercel.com/docs/rewrites>
+- EdgeOne Pages Build Guide：<https://pages.edgeone.ai/zh/document/build-guide>
+- EdgeOne Pages Go Handler Template：<https://pages.edgeone.ai/templates/go-handler-template>
