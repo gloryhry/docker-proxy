@@ -1,4 +1,4 @@
-package proxy
+package handler
 
 import (
 	"context"
@@ -820,4 +820,12 @@ func serveSearchPage(w http.ResponseWriter) {
 	</script>
 </body>
 </html>`)
+}
+
+
+var sharedHandler = NewHandler()
+
+// Handler 作为 EdgeOne Pages Go Handler 入口。
+func Handler(w http.ResponseWriter, r *http.Request) {
+	sharedHandler.ServeHTTP(w, r)
 }

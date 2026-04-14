@@ -7,13 +7,12 @@
 - [ ] 代码已位于 `edgeone-pages` 分支或独立 EdgeOne 仓库
 - [ ] `cloud-functions/go.mod` 存在
 - [ ] `cloud-functions/index.go` 存在
-- [ ] `cloud-functions/internal/proxy/handler.go` 存在
-- [ ] 本地验证通过：
+- [ ] `cloud-functions/[[path]].go` 存在
+- [ ] `index.go` 与 `[[path]].go` 均为自包含 Handler 文件
+- [ ] 如本地安装了 EdgeOne CLI，可执行：
 
 ```bash
-cd "cloud-functions"
-go test ./...
-go build ./...
+edgeone pages build
 ```
 
 ## 二、EdgeOne 控制台填写
@@ -30,7 +29,7 @@ go build ./...
 
 - 当前仓库不是静态站点，无需输出目录
 - 当前仓库不是前端框架项目，无需构建命令
-- Go 运行时入口为 `cloud-functions/index.go`
+- Go Handlers 会从 `cloud-functions/` 自动识别
 
 ## 三、部署步骤
 
@@ -73,6 +72,17 @@ docker pull 你的域名/library/nginx:latest
 - [ ] 是否误填了 Build Command / Output Directory
 - [ ] 是否实际部署的是正确分支
 - [ ] 自定义域名是否已正确绑定到当前项目
+
+如果构建日志再次出现：
+
+```text
+package xxx is not in std
+```
+
+通常说明：
+
+- [ ] `cloud-functions` 下的 Handler 文件仍依赖了自定义内部包
+- [ ] EdgeOne 正在按单文件 Handler 模式编译，需继续保持入口文件完全自包含
 
 ## 七、官方文档
 

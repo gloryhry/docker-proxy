@@ -2,7 +2,7 @@
 
 这是一个为 **腾讯 EdgeOne Pages** 单独整理的 Docker Registry 代理仓库。
 
-当前仓库只面向 **EdgeOne Go Runtime / Framework Mode**，不再混入 Vercel 结构，从而避免平台识别冲突。
+当前仓库只面向 **EdgeOne Go Functions / Handler Mode**，不再混入 Vercel 结构，从而避免平台识别冲突。
 
 ## 保留能力
 
@@ -23,39 +23,39 @@
 .
 ├── cloud-functions/
 │   ├── go.mod
-│   ├── index.go                    # EdgeOne 单入口
-│   └── internal/proxy/
-│       ├── handler.go              # 核心代理逻辑
-│       └── handler_test.go         # 核心测试
+│   ├── index.go                    # 根路径 /
+│   └── [[path]].go                 # 其余路径 catch-all
 ├── README.md
 └── DEPLOYMENT_CHECKLIST.md
 ```
 
 ## 设计说明
 
-基于 EdgeOne Pages 官方 Go 文档，当前仓库采用 **Framework Mode**：
+基于 EdgeOne Pages 官方 Go 文档，当前仓库采用 **Handler Mode**：
 
 - 运行时代码全部放在 `cloud-functions/`
-- `cloud-functions/index.go` 作为唯一 Go 入口
-- 所有 HTTP 路由统一交给 `internal/proxy` 中的共享 handler
-- `cloud-functions/go.mod` 独立存在，避免根目录混合其他平台配置
+- `index.go` 与 `[[path]].go` 都是 **自包含** 的 Handler 文件
+- 不再依赖 `cloud-functions` 内部的自定义 Go 包，避免 EdgeOne 单文件编译时报 `package ... is not in std`
+- `cloud-functions/go.mod` 单独存在，保持 Go Functions 目录独立
 
 这样做的目标是：
 
-- **KISS**：只保留 EdgeOne 需要的结构
-- **DRY**：所有 HTTP 逻辑仍集中在一套共享 handler 中
+- **KISS**：严格贴合 EdgeOne 的 Handler 目录约定
+- **DRY**：虽然为适配平台保留了少量文件级重复，但避免了更复杂的构建注入逻辑
 - **YAGNI**：不再保留 Vercel / VPS / 多平台混合入口
-- **SOLID**：路由入口与代理核心分离，职责清晰
+- **SOLID**：部署适配与业务目标分离，EdgeOne 分支只服务一个平台
 
 ## 本地验证
 
-在仓库根目录执行：
+由于 `[[path]].go` 是 EdgeOne 的文件路由约定，标准 `go test ./...` / `go build ./...` 无法直接识别该文件名。
+
+建议使用：
 
 ```bash
-cd "cloud-functions"
-go test ./...
-go build ./...
+edgeone pages build
 ```
+
+如果只验证核心代理逻辑，可将 `cloud-functions/index.go` 临时复制为普通文件名后再用标准 Go 工具检查。
 
 ## EdgeOne Pages 部署
 
@@ -63,7 +63,7 @@ go build ./...
 
 导入仓库后，建议按以下方式填写：
 
-- **框架（Framework Preset）**：`Other`
+- **Framework Preset**：`Other`
 - **Root Directory**：仓库根目录
 - **Install Command**：留空
 - **Build Command**：留空
@@ -72,16 +72,16 @@ go build ./...
 原因：
 
 - 这是 Go Functions 仓库，不是静态站点
-- 运行时代码已按 EdgeOne 约定放在 `cloud-functions/`
-- 不需要额外的前端构建步骤
+- `cloud-functions/` 会被 EdgeOne 识别为函数目录
+- 不需要额外的前端安装和构建过程
 
 ### 部署步骤
 
-1. 将当前分支代码推送到 Git 仓库
-2. 在 EdgeOne Pages 中导入该仓库
+1. 将 `edgeone-pages` 分支推送到 Git 平台
+2. 在 EdgeOne Pages 中导入该分支
 3. 保持项目根目录为仓库根目录
-4. 保持安装/构建/输出目录为空
-5. 等待 EdgeOne 自动识别 `cloud-functions/` 下的 Go Functions
+4. 保持安装 / 构建 / 输出目录为空
+5. 等待 EdgeOne 自动识别 `cloud-functions/` 下的 Go Handlers
 6. 部署完成后验证：
 
 ```bash
