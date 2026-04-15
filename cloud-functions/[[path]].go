@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -323,9 +325,10 @@ func (a *app) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]any{
-		"proxy":  "running",
-		"time":   time.Now().Format(time.RFC3339),
-		"listen": a.opts.listenLabel,
+		"proxy":   "running",
+		"time":    time.Now().Format(time.RFC3339),
+		"listen":  a.opts.listenLabel,
+		"request": buildHealthRequestInfo(r),
 	}
 
 	if r.URL.Query().Get("probe") != "upstream" {
@@ -561,6 +564,87 @@ func (a *app) proxyDirect(w http.ResponseWriter, r *http.Request, hubHost string
 	}
 
 	flushResponse(w, resp)
+}
+
+func buildHealthRequestInfo(r *http.Request) map[string]any {
+	info := map[string]any{
+		"remote_addr": r.RemoteAddr,
+	}
+
+	if clientIP := extractClientIP(r); clientIP != "" {
+		info["client_ip"] = clientIP
+	}
+
+	if runtime := collectNonEmpty(map[string]string{
+		"hostname":     os.Getenv("HOSTNAME"),
+		"region":       firstNonEmpty(os.Getenv("EDGEONE_REGION"), os.Getenv("REGION"), os.Getenv("FUNCTION_REGION")),
+		"node_env":     os.Getenv("NODE_ENV"),
+		"go_env":       os.Getenv("GO_ENV"),
+		"pages_region": firstNonEmpty(r.Header.Get("X-Edgeone-Region"), r.Header.Get("X-Region")),
+	}); len(runtime) > 0 {
+		info["runtime"] = runtime
+	}
+
+	if geo := collectNonEmpty(map[string]string{
+		"country": firstNonEmpty(
+			r.Header.Get("X-Geo-Country"),
+			r.Header.Get("X-Country"),
+			r.Header.Get("CF-IPCountry"),
+			r.Header.Get("X-Vercel-IP-Country"),
+		),
+		"region": firstNonEmpty(
+			r.Header.Get("X-Geo-Region"),
+			r.Header.Get("X-Region"),
+			r.Header.Get("X-Vercel-IP-Country-Region"),
+		),
+		"city": firstNonEmpty(
+			r.Header.Get("X-Geo-City"),
+			r.Header.Get("X-City"),
+			r.Header.Get("X-Vercel-IP-City"),
+		),
+	}); len(geo) > 0 {
+		info["geo"] = geo
+	}
+
+	return info
+}
+
+func extractClientIP(r *http.Request) string {
+	for _, key := range []string{"X-Forwarded-For", "X-Real-IP", "CF-Connecting-IP", "True-Client-IP"} {
+		if value := strings.TrimSpace(r.Header.Get(key)); value != "" {
+			if key == "X-Forwarded-For" {
+				value = strings.TrimSpace(strings.Split(value, ",")[0])
+			}
+			if host, _, err := net.SplitHostPort(value); err == nil {
+				return host
+			}
+			return value
+		}
+	}
+
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func collectNonEmpty(values map[string]string) map[string]string {
+	result := make(map[string]string)
+	for key, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			result[key] = trimmed
+		}
+	}
+	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func respondUpstreamError(w http.ResponseWriter, err error) {
