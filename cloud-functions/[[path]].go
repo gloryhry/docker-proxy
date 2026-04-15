@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -80,26 +81,30 @@ func defaultOptions() options {
 		routes:         cloneMap(defaultRoutes),
 		blockedUAs:     append([]string(nil), defaultBlockedUAs...),
 		registryClient: &http.Client{
-			Timeout: 300 * time.Second,
+			Timeout: 8 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig:       &tls.Config{},
-				MaxIdleConns:          100,
-				MaxIdleConnsPerHost:   50,
-				IdleConnTimeout:       90 * time.Second,
-				ResponseHeaderTimeout: 60 * time.Second,
+				MaxIdleConns:          32,
+				MaxIdleConnsPerHost:   16,
+				IdleConnTimeout:       30 * time.Second,
+				TLSHandshakeTimeout:   5 * time.Second,
+				ResponseHeaderTimeout: 5 * time.Second,
+				ForceAttemptHTTP2:     false,
 			},
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
 		downloadClient: &http.Client{
-			Timeout: 600 * time.Second,
+			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig:       &tls.Config{},
-				MaxIdleConns:          100,
-				MaxIdleConnsPerHost:   50,
-				IdleConnTimeout:       90 * time.Second,
-				ResponseHeaderTimeout: 120 * time.Second,
+				MaxIdleConns:          32,
+				MaxIdleConnsPerHost:   16,
+				IdleConnTimeout:       30 * time.Second,
+				TLSHandshakeTimeout:   5 * time.Second,
+				ResponseHeaderTimeout: 8 * time.Second,
+				ForceAttemptHTTP2:     false,
 			},
 		},
 		healthChecks: []healthCheck{
@@ -110,10 +115,6 @@ func defaultOptions() options {
 			{
 				Name: "registry-1.docker.io",
 				URL:  "https://registry-1.docker.io/v2/",
-			},
-			{
-				Name: "hub.docker.com",
-				URL:  "https://hub.docker.com/",
 			},
 		},
 		listenLabel: "serverless",
@@ -185,33 +186,44 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	hubHost, isDockerHub := a.resolveUpstream(r)
 	userAgent := strings.ToLower(r.Header.Get("User-Agent"))
+	path := r.URL.Path
 
 	if a.isBlockedUA(userAgent) {
 		serveNginxPage(w)
 		return
 	}
 
-	path := r.URL.Path
-	isBrowser := strings.Contains(userAgent, "mozilla")
-	isV1Hub := strings.Contains(path, "/v1/search") || strings.Contains(path, "/v1/repositories")
+	switch {
+	case path == "/health":
+		a.handleHealth(w, r)
+		return
+	case path == "/v2/" || path == "/v2":
+		handleV2Ping(w)
+		return
+	case strings.HasPrefix(path, "/token"):
+		a.handleToken(w, r)
+		return
+	case strings.HasPrefix(path, "/v2/"):
+		a.handleV2(w, r, hubHost, isDockerHub)
+		return
+	}
 
-	if isBrowser || isV1Hub {
+	if a.shouldServeBrowser(path, userAgent) {
 		a.handleBrowser(w, r, hubHost, isDockerHub)
 		return
 	}
 
-	switch {
-	case path == "/v2/" || path == "/v2":
-		handleV2Ping(w)
-	case strings.Contains(path, "/token"):
-		a.handleToken(w, r)
-	case strings.HasPrefix(path, "/v2/"):
-		a.handleV2(w, r, hubHost, isDockerHub)
-	case path == "/health":
-		a.handleHealth(w)
-	default:
-		a.proxyDirect(w, r, hubHost)
+	a.proxyDirect(w, r, hubHost)
+}
+
+func (a *app) shouldServeBrowser(path, userAgent string) bool {
+	if path == "/" || path == "/search" || strings.HasPrefix(path, "/search/") {
+		return true
 	}
+	if strings.HasPrefix(path, "/v1/") {
+		return true
+	}
+	return strings.Contains(userAgent, "mozilla") && path == "/"
 }
 
 func (a *app) resolveUpstream(r *http.Request) (hubHost string, isDockerHub bool) {
@@ -261,13 +273,20 @@ func (a *app) handleBrowser(w http.ResponseWriter, r *http.Request, hubHost stri
 	}
 
 	if isDockerHub {
-		if q := r.URL.Query().Get("q"); strings.Contains(q, "library/") && q != "library/" {
-			values := r.URL.Query()
-			values.Set("q", strings.Replace(q, "library/", "", 1))
-			r = cloneRequest(r)
-			r.URL.RawQuery = values.Encode()
+		if path == "/search" || strings.HasPrefix(path, "/search/") {
+			searchURL := "https://hub.docker.com/search"
+			if r.URL.RawQuery != "" {
+				searchURL += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, searchURL, http.StatusFound)
+			return
 		}
 		a.proxyBrowser(w, r, a.opts.browserHubHost)
+		return
+	}
+
+	if path == "/search" || strings.HasPrefix(path, "/search/") {
+		http.Redirect(w, r, buildURL(a.opts.upstreamScheme, hubHost, r.URL.Path, r.URL.RawQuery), http.StatusFound)
 		return
 	}
 
@@ -294,7 +313,7 @@ func (a *app) proxyBrowser(w http.ResponseWriter, r *http.Request, host string) 
 	flushResponse(w, resp)
 }
 
-func (a *app) handleHealth(w http.ResponseWriter) {
+func (a *app) handleHealth(w http.ResponseWriter, r *http.Request) {
 	type checkResult struct {
 		Name    string `json:"name"`
 		URL     string `json:"url"`
@@ -303,30 +322,35 @@ func (a *app) handleHealth(w http.ResponseWriter) {
 		Detail  string `json:"detail,omitempty"`
 	}
 
+	response := map[string]any{
+		"proxy":  "running",
+		"time":   time.Now().Format(time.RFC3339),
+		"listen": a.opts.listenLabel,
+	}
+
+	if r.URL.Query().Get("probe") != "upstream" {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		_ = encoder.Encode(response)
+		return
+	}
+
 	results := make([]checkResult, 0, len(a.opts.healthChecks))
 	for _, check := range a.opts.healthChecks {
 		start := time.Now()
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, check.URL, nil)
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, check.URL, nil)
 		if err != nil {
-			results = append(results, checkResult{
-				Name:    check.Name,
-				URL:     check.URL,
-				Status:  "FAIL",
-				Latency: "0s",
-				Detail:  err.Error(),
-			})
+			cancel()
+			results = append(results, checkResult{Name: check.Name, URL: check.URL, Status: "FAIL", Latency: "0s", Detail: err.Error()})
 			continue
 		}
 		req.Header.Set("User-Agent", "docker-proxy/health-check")
-
 		resp, err := a.opts.registryClient.Do(req)
 		elapsed := time.Since(start).Round(time.Millisecond)
-
-		result := checkResult{
-			Name:    check.Name,
-			URL:     check.URL,
-			Latency: elapsed.String(),
-		}
+		result := checkResult{Name: check.Name, URL: check.URL, Latency: elapsed.String()}
 		if err != nil {
 			result.Status = "FAIL"
 			result.Detail = err.Error()
@@ -337,19 +361,16 @@ func (a *app) handleHealth(w http.ResponseWriter) {
 				result.Detail = "OK"
 			}
 		}
+		cancel()
 		results = append(results, result)
 	}
 
+	response["checks"] = results
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(map[string]any{
-		"proxy":  "running",
-		"time":   time.Now().Format(time.RFC3339),
-		"listen": a.opts.listenLabel,
-		"checks": results,
-	})
+	_ = encoder.Encode(response)
 }
 
 func handleV2Ping(w http.ResponseWriter) {
@@ -367,7 +388,7 @@ func (a *app) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target := a.opts.authBaseURL + r.URL.Path
+	target := strings.TrimRight(a.opts.authBaseURL, "/") + "/token"
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -383,7 +404,7 @@ func (a *app) handleToken(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.opts.registryClient.Do(req)
 	if err != nil {
 		log.Printf("token 代理失败: %v", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		respondUpstreamError(w, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -432,6 +453,8 @@ func (a *app) handleV2(w http.ResponseWriter, r *http.Request, hubHost string, i
 			token, err = a.getToken(repo)
 			if err != nil {
 				log.Printf("获取 token 失败 (repo=%s): %v", repo, err)
+				http.Error(w, "failed to fetch upstream token: "+err.Error(), http.StatusBadGateway)
+				return
 			}
 		}
 	}
@@ -457,7 +480,7 @@ func (a *app) handleV2(w http.ResponseWriter, r *http.Request, hubHost string, i
 	resp, err := a.opts.registryClient.Do(req)
 	if err != nil {
 		log.Printf("上游请求失败: %v", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		respondUpstreamError(w, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -488,7 +511,7 @@ func (a *app) handleCDNRedirect(w http.ResponseWriter, original *http.Request, l
 	resp, err := a.opts.downloadClient.Do(req)
 	if err != nil {
 		log.Printf("CDN 下载失败: %v", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		respondUpstreamError(w, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -527,7 +550,7 @@ func (a *app) proxyDirect(w http.ResponseWriter, r *http.Request, hubHost string
 
 	resp, err := a.opts.registryClient.Do(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		respondUpstreamError(w, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -538,6 +561,18 @@ func (a *app) proxyDirect(w http.ResponseWriter, r *http.Request, hubHost string
 	}
 
 	flushResponse(w, resp)
+}
+
+func respondUpstreamError(w http.ResponseWriter, err error) {
+	if err == nil {
+		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadGateway)
 }
 
 func (a *app) getCachedToken(repo string) (string, bool) {
@@ -821,8 +856,6 @@ func serveSearchPage(w http.ResponseWriter) {
 </body>
 </html>`)
 }
-
-
 
 var sharedHandler = NewHandler()
 
